@@ -37,6 +37,7 @@ Most text-to-SQL demos stop at "LLM writes a query". Production teams in regulat
 - 📊 **Auto-charts**: the LLM suggests a chart, which is validated against the actual result, with a heuristic fallback
 - 📝 **Grounded summaries**: a second LLM call explains the result using only numbers from the returned rows
 - 🔍 **Full transparency**: every answer shows the SQL, any rejected attempts, latency and token usage
+- 🔐 **Privacy by design**: the LLM writes SQL but never touches the database. Queries run locally, and with summaries off no portfolio data leaves your machine ([details](#-data-privacy-what-leaves-your-machine))
 - 📥 **CSV export** of every result
 - 🧪 **50 unit tests** that run offline (no API key): sandbox attacks, engine behaviour with a scripted LLM, data rules and the evaluation comparer
 - ⌨️ **CLI mode** for terminal use
@@ -109,6 +110,21 @@ LLM-generated SQL is treated as **untrusted input**. Protection works in layers,
 4. A **wall-clock timeout** stops runaway queries such as infinite recursive CTEs, and a **row cap** limits result size.
 
 All of this is covered by tests in `tests/test_safe_executor.py`.
+
+## 🔐 Data privacy: what leaves your machine
+
+**The LLM never connects to the database.** It only writes SQL as text. Queries run locally, inside the read-only sandbox, and the database file never leaves your machine.
+
+| Sent to the LLM provider (OpenAI) | Never sent |
+|---|---|
+| Your question and the last few questions + SQL of the conversation (for follow-ups) | The database file or any table as a whole |
+| The semantic layer: table/column descriptions, glossary, rules, example queries | Database credentials or connection details |
+| Database error messages during self-correction (e.g. `no such column: x`), no row data | Rows beyond the summary preview |
+| **Only if "Plain-English summary" is on:** up to the first 30 rows of the query result, to write the summary | |
+
+Turn the **Plain-English summary** toggle off (sidebar) and **no portfolio data is sent at all**: only the question, the schema description and the generated SQL. Results are still shown as a table and chart, computed locally.
+
+For production use with real client data, the same design works with an enterprise LLM endpoint (e.g. Azure OpenAI in the client's own tenant) or a self-hosted model, by swapping the client in `copilot/llm.py`.
 
 ## 📏 Evaluation
 
