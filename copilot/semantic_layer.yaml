@@ -1,0 +1,180 @@
+# =====================================================================
+# Semantic layer: the business context the LLM needs to write correct
+# SQL against the loan portfolio. Kept in YAML so analysts can review and
+# extend it without touching code.
+# =====================================================================
+
+dialect: SQLite
+snapshot_date: "2026-09-30"
+currency: EUR
+
+tables:
+  borrowers:
+    description: One row per obligor (individual or company).
+    columns:
+      borrower_id: "Primary key, e.g. 'B000123'."
+      borrower_type: "'Individual' | 'SME' | 'Corporate'."
+      region: "Greek region of the borrower, e.g. 'Attica', 'Central Macedonia', 'Crete'."
+      industry_sector: "Companies only (NULL for individuals): 'Retail Trade', 'Manufacturing', 'Construction', 'Tourism and Hospitality', 'Agriculture', 'Transport and Logistics', 'Real Estate Activities', 'Professional Services'."
+      employment_status: "Individuals only (NULL for companies): 'Employed', 'Self-employed', 'Unemployed', 'Retired'."
+      customer_since: "Date the relationship started."
+
+  loans:
+    description: One row per credit facility. Balances, DPD and staging are as of the snapshot date.
+    columns:
+      loan_id: "Primary key, e.g. 'L0001234'."
+      borrower_id: "FK -> borrowers.borrower_id."
+      product_type: "'Mortgage' | 'Consumer Loan' | 'Credit Card' | 'SME Term Loan' | 'Credit Line' | 'Corporate Loan'."
+      origination_date: "Disbursement date. Vintage = year of origination_date."
+      maturity_date: "Contractual maturity. NULL for revolving products (Credit Card, Credit Line)."
+      original_amount_eur: "Original principal / credit limit."
+      interest_rate_pct: "Contractual interest rate in percent (e.g. 4.25 means 4.25%)."
+      rate_type: "'Fixed' | 'Floating'."
+      loan_status: "'Active' | 'Closed' | 'Written-off'."
+      outstanding_principal_eur: "Outstanding principal. 0 for Closed and Written-off loans."
+      accrued_interest_eur: "Accrued unpaid (incl. default) interest."
+      days_past_due: "Days past due (DPD). NULL unless loan_status = 'Active'."
+      dpd_bucket: "'Current' | '1-30' | '31-60' | '61-90' | '91-180' | '181-360' | '361-720' | '720+'. NULL unless Active."
+      ifrs9_stage: "IFRS 9 impairment stage 1, 2 or 3 (integer). NULL unless Active."
+      is_npe: "1 if non-performing exposure, else 0."
+      unlikely_to_pay_flag: "1 if classified NPE on unlikely-to-pay grounds (can have DPD <= 90)."
+      is_forborne: "1 if the loan is currently forborne (measure active or within 24-month probation)."
+      default_date: "Date the loan became non-performing. Set for NPE and Written-off loans."
+      provision_eur: "Loan-loss allowance / impairment provision held against the loan."
+      servicing_strategy: "Active loans only: 'Standard Servicing', 'Early Collections', 'Amicable Settlement', 'Restructuring', 'Legal Enforcement', 'Collateral Liquidation', 'Loan Sale Candidate'."
+      closed_date: "Date a Closed loan was repaid/closed."
+      write_off_date: "Date a Written-off loan was written off."
+      write_off_amount_eur: "Amount written off."
+
+  collaterals:
+    description: Security pledged against loans (a loan can have 0..n collaterals).
+    columns:
+      collateral_id: "Primary key."
+      loan_id: "FK -> loans.loan_id."
+      collateral_type: "'Residential Real Estate' | 'Commercial Real Estate' | 'Land' | 'Equipment' | 'Cash Deposit'."
+      region: "Region where the asset is located (may differ from borrower region)."
+      valuation_eur: "Latest market valuation."
+      valuation_date: "Date of the latest valuation."
+      lien_rank: "1 = first-ranking lien, 2+ = subordinated."
+
+  payments:
+    description: Monthly instalment schedule and actual payments for Active loans, last 24 months (Oct 2024 - Sep 2026). One row per loan per due month.
+    columns:
+      payment_id: "Primary key."
+      loan_id: "FK -> loans.loan_id."
+      due_date: "Instalment due date (the 10th of each month)."
+      amount_due_eur: "Instalment amount due."
+      amount_paid_eur: "Amount actually paid (0 if missed)."
+      payment_date: "Date of payment; NULL if nothing was paid."
+
+  forbearance_measures:
+    description: Concessions granted to borrowers in financial difficulty (restructurings). A loan can have several over time.
+    columns:
+      measure_id: "Primary key."
+      loan_id: "FK -> loans.loan_id."
+      measure_type: "'Payment Holiday' | 'Term Extension' | 'Interest Rate Reduction' | 'Interest-only Period' | 'Split and Balloon' | 'Partial Debt Write-down'."
+      start_date: "Start of the measure."
+      end_date: "End of the measure (may be in the future for Active measures)."
+      status: "'Active' | 'Completed' (borrower complied) | 'Failed' (borrower re-defaulted)."
+
+  legal_actions:
+    description: Enforcement and legal steps taken on non-performing loans.
+    columns:
+      action_id: "Primary key."
+      loan_id: "FK -> loans.loan_id."
+      action_type: "'Payment Order' | 'Property Seizure' | 'Auction Scheduled' | 'Auction Completed' | 'Bank Account Garnishment' | 'Bankruptcy Filing' | 'Household Insolvency Filing (Law 3869/2010)'."
+      filed_date: "Date the action was filed."
+      status: "'Pending' | 'In Progress' | 'Completed' | 'Suspended'."
+      legal_costs_eur: "Legal costs incurred."
+      recovered_amount_eur: "Cash recovered (only for completed auctions / garnishments)."
+
+  portfolio_metadata:
+    description: Key/value metadata. key = 'snapshot_date' holds the reporting date.
+    columns:
+      key: "Metadata key."
+      value: "Metadata value (text)."
+
+  v_loan_overview:
+    description: >
+      VIEW. All columns of loans plus borrower_type, region, industry_sector, employment_status (borrower's),
+      gross_book_value_eur, total_collateral_eur, ltv_ratio and forbearance_count.
+      Prefer this view for loan-level questions that need borrower attributes or LTV.
+    columns:
+      gross_book_value_eur: "outstanding_principal_eur + accrued_interest_eur."
+      total_collateral_eur: "Sum of collateral valuations for the loan (0 if unsecured)."
+      ltv_ratio: "gross_book_value_eur / total_collateral_eur as a ratio (0.85 = 85%). NULL if unsecured."
+      forbearance_count: "Number of forbearance measures ever granted on the loan."
+
+relationships:
+  - "borrowers.borrower_id = loans.borrower_id (one borrower, many loans)"
+  - "loans.loan_id = collaterals.loan_id / payments.loan_id / forbearance_measures.loan_id / legal_actions.loan_id"
+
+glossary:
+  Gross Book Value (GBV): "outstanding_principal_eur + accrued_interest_eur. The standard size metric of the book. 'Exposure', 'balance' and 'portfolio size' mean GBV unless the user says principal."
+  Active portfolio: "loan_status = 'Active'. Default scope for any portfolio, risk, DPD, stage or provision metric unless the user asks about closed or written-off loans."
+  NPE / NPL: "Non-performing exposure: is_npe = 1 (DPD > 90 or unlikely-to-pay). NPL is used interchangeably."
+  NPE ratio: "SUM(GBV of NPE loans) / SUM(GBV of all Active loans), in percent. Use count-based ratio only if the user explicitly asks for number of loans."
+  Coverage ratio: "SUM(provision_eur) / SUM(GBV), in percent, over the relevant population (e.g. NPE coverage = over is_npe = 1)."
+  DPD: "days_past_due. 'Delinquent' / 'in arrears' = days_past_due > 0. '90+' = days_past_due > 90."
+  IFRS 9 stages: "Stage 1 = performing, Stage 2 = significant increase in credit risk (DPD > 30, forborne performing, or SICR), Stage 3 = credit-impaired (= NPE)."
+  Forborne: "is_forborne = 1 means currently forborne. 'Restructured' / 'forborne loans' may also mean loans with any record in forbearance_measures; 'restructured N times' = COUNT of measures per loan."
+  Re-default: "A forbearance measure with status = 'Failed'."
+  NPE inflow / new defaults: "Loans that BECAME non-performing in a period = default_date within that period, regardless of their current status. Do NOT filter is_npe = 1 or loan_status: loans that defaulted and were later written off still count as inflows. Use is_npe = 1 only for the CURRENT stock of NPEs."
+  LTV: "Loan-to-value = GBV / collateral value (ltv_ratio in v_loan_overview). Under-collateralised = ltv_ratio > 1."
+  Secured / unsecured: "Secured = loan has at least one row in collaterals."
+  Cure rate / collection rate: "Collection rate = SUM(amount_paid_eur) / SUM(amount_due_eur) in payments over the period."
+  Vintage: "Year of origination_date."
+  Stale valuation: "valuation_date older than 3 years before the snapshot date."
+  Recoveries: "SUM(recovered_amount_eur) from legal_actions."
+
+sql_rules:
+  - "Write ONE read-only SELECT statement (CTEs allowed). SQLite dialect."
+  - "Date literals are ISO text: compare as strings, e.g. origination_date >= '2008-01-01'."
+  - "Year: strftime('%Y', col). Month: strftime('%Y-%m', col). Quarter label: strftime('%Y', col) || '-Q' || ((CAST(strftime('%m', col) AS INTEGER) + 2) / 3)."
+  - "'Today' / 'now' / 'current' means the snapshot date '2026-09-30', NOT the real current date. Never use date('now')."
+  - "Relative periods are relative to the snapshot: 'last 12 months' = due_date > date('2026-09-30', '-12 months')."
+  - "Money: present in EUR, ROUND(x, 2). For large totals you may also return millions as ROUND(x / 1e6, 2) with a column name ending in _m_eur."
+  - "Percentages: ROUND(100.0 * numerator / denominator, 2) with a column name ending in _pct. Always multiply by 100.0 (float) to avoid integer division."
+  - "Use clear snake_case column aliases describing units (e.g. npe_gbv_eur, npe_ratio_pct, loan_count)."
+  - "For rankings ('top', 'largest') use ORDER BY ... DESC with LIMIT. For breakdowns ORDER BY the main metric DESC unless a natural order exists (dates, buckets, stages)."
+  - "Order DPD buckets by their natural order using CASE (Current, 1-30, 31-60, 61-90, 91-180, 181-360, 361-720, 720+)."
+  - "Filter loan_status = 'Active' for balance / risk metrics unless the question is about closed or written-off loans."
+  - "Never select every column of a large table; return only the columns needed. For loan lists include loan_id and the key figures."
+
+examples:
+  - question: "What is the NPE ratio of the portfolio?"
+    sql: |
+      SELECT ROUND(100.0 * SUM(CASE WHEN is_npe = 1 THEN outstanding_principal_eur + accrued_interest_eur ELSE 0 END)
+                   / SUM(outstanding_principal_eur + accrued_interest_eur), 2) AS npe_ratio_pct
+      FROM loans
+      WHERE loan_status = 'Active';
+
+  - question: "Show GBV and NPE coverage by IFRS 9 stage"
+    sql: |
+      SELECT ifrs9_stage,
+             COUNT(*) AS loan_count,
+             ROUND(SUM(outstanding_principal_eur + accrued_interest_eur), 2) AS gbv_eur,
+             ROUND(100.0 * SUM(provision_eur) / SUM(outstanding_principal_eur + accrued_interest_eur), 2) AS coverage_pct
+      FROM loans
+      WHERE loan_status = 'Active'
+      GROUP BY ifrs9_stage
+      ORDER BY ifrs9_stage;
+
+  - question: "Which regions have the highest non-performing exposure?"
+    sql: |
+      SELECT region,
+             ROUND(SUM(gross_book_value_eur), 2) AS npe_gbv_eur,
+             COUNT(*) AS npe_loan_count
+      FROM v_loan_overview
+      WHERE loan_status = 'Active' AND is_npe = 1
+      GROUP BY region
+      ORDER BY npe_gbv_eur DESC;
+
+  - question: "Monthly collection rate over the last 12 months"
+    sql: |
+      SELECT strftime('%Y-%m', due_date) AS month,
+             ROUND(100.0 * SUM(amount_paid_eur) / SUM(amount_due_eur), 2) AS collection_rate_pct
+      FROM payments
+      WHERE due_date > date('2026-09-30', '-12 months')
+      GROUP BY month
+      ORDER BY month;

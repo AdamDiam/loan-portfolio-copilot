@@ -1,0 +1,199 @@
+# Evaluation set: natural-language questions with hand-written "gold" SQL.
+# A prediction is correct when its result set matches the gold result set
+# (execution accuracy; column names and row order are ignored, see
+# copilot/eval/compare.py). Categories reflect what loan-servicing analysts ask.
+
+- id: q01
+  category: portfolio
+  question: How many active loans are in the portfolio?
+  gold_sql: SELECT COUNT(*) FROM loans WHERE loan_status = 'Active'
+
+- id: q02
+  category: portfolio
+  question: What is the total gross book value of the active portfolio?
+  gold_sql: SELECT ROUND(SUM(outstanding_principal_eur + accrued_interest_eur), 2) FROM loans WHERE loan_status = 'Active'
+
+- id: q03
+  category: portfolio
+  question: Break down the number of active loans and their GBV by product type.
+  gold_sql: |
+    SELECT product_type, COUNT(*), ROUND(SUM(outstanding_principal_eur + accrued_interest_eur), 2)
+    FROM loans WHERE loan_status = 'Active' GROUP BY product_type
+
+- id: q04
+  category: portfolio
+  question: How many loans are active, closed and written off?
+  gold_sql: SELECT loan_status, COUNT(*) FROM loans GROUP BY loan_status
+
+- id: q05
+  category: npe
+  question: What is the NPE ratio?
+  gold_sql: |
+    SELECT ROUND(100.0 * SUM(CASE WHEN is_npe = 1 THEN outstanding_principal_eur + accrued_interest_eur ELSE 0 END)
+           / SUM(outstanding_principal_eur + accrued_interest_eur), 2)
+    FROM loans WHERE loan_status = 'Active'
+
+- id: q06
+  category: npe
+  question: What is the NPE ratio for each product type?
+  gold_sql: |
+    SELECT product_type,
+           ROUND(100.0 * SUM(CASE WHEN is_npe = 1 THEN outstanding_principal_eur + accrued_interest_eur ELSE 0 END)
+           / SUM(outstanding_principal_eur + accrued_interest_eur), 2)
+    FROM loans WHERE loan_status = 'Active' GROUP BY product_type
+
+- id: q07
+  category: npe
+  question: Which 3 regions have the largest non-performing GBV?
+  gold_sql: |
+    SELECT b.region, ROUND(SUM(l.outstanding_principal_eur + l.accrued_interest_eur), 2) AS npe_gbv
+    FROM loans l JOIN borrowers b ON b.borrower_id = l.borrower_id
+    WHERE l.loan_status = 'Active' AND l.is_npe = 1
+    GROUP BY b.region ORDER BY npe_gbv DESC LIMIT 3
+
+- id: q08
+  category: npe
+  question: How many loans are NPE only because they are unlikely to pay, with 90 days past due or less?
+  gold_sql: SELECT COUNT(*) FROM loans WHERE loan_status = 'Active' AND is_npe = 1 AND days_past_due <= 90
+
+- id: q09
+  category: delinquency
+  question: Show the number of active loans and GBV in each DPD bucket.
+  gold_sql: |
+    SELECT dpd_bucket, COUNT(*), ROUND(SUM(outstanding_principal_eur + accrued_interest_eur), 2)
+    FROM loans WHERE loan_status = 'Active' GROUP BY dpd_bucket
+
+- id: q10
+  category: delinquency
+  question: What is the average days past due of non-performing loans by borrower type?
+  gold_sql: |
+    SELECT b.borrower_type, ROUND(AVG(l.days_past_due), 2)
+    FROM loans l JOIN borrowers b ON b.borrower_id = l.borrower_id
+    WHERE l.loan_status = 'Active' AND l.is_npe = 1 GROUP BY b.borrower_type
+
+- id: q11
+  category: delinquency
+  question: What was the monthly collection rate in 2026?
+  gold_sql: |
+    SELECT strftime('%Y-%m', due_date), ROUND(100.0 * SUM(amount_paid_eur) / SUM(amount_due_eur), 2)
+    FROM payments WHERE due_date >= '2026-01-01' AND due_date < '2027-01-01'
+    GROUP BY 1
+
+- id: q12
+  category: delinquency
+  question: How many active loans missed all of their last 3 instalments completely?
+  gold_sql: |
+    SELECT COUNT(*) FROM (
+      SELECT loan_id FROM payments
+      WHERE due_date IN (SELECT DISTINCT due_date FROM payments ORDER BY due_date DESC LIMIT 3)
+      GROUP BY loan_id HAVING COUNT(*) = 3 AND SUM(amount_paid_eur) = 0
+    )
+
+- id: q13
+  category: ifrs9
+  question: Show GBV, provisions and coverage ratio by IFRS 9 stage.
+  gold_sql: |
+    SELECT ifrs9_stage, ROUND(SUM(outstanding_principal_eur + accrued_interest_eur), 2), ROUND(SUM(provision_eur), 2),
+           ROUND(100.0 * SUM(provision_eur) / SUM(outstanding_principal_eur + accrued_interest_eur), 2)
+    FROM loans WHERE loan_status = 'Active' GROUP BY ifrs9_stage
+
+- id: q14
+  category: ifrs9
+  question: What is the NPE coverage ratio for secured versus unsecured loans?
+  gold_sql: |
+    SELECT CASE WHEN total_collateral_eur > 0 THEN 'Secured' ELSE 'Unsecured' END,
+           ROUND(100.0 * SUM(provision_eur) / SUM(gross_book_value_eur), 2)
+    FROM v_loan_overview WHERE loan_status = 'Active' AND is_npe = 1 GROUP BY 1
+
+- id: q15
+  category: forbearance
+  question: How many active loans are currently forborne?
+  gold_sql: SELECT COUNT(*) FROM loans WHERE loan_status = 'Active' AND is_forborne = 1
+
+- id: q16
+  category: forbearance
+  question: How many loans have been restructured more than 2 times?
+  gold_sql: SELECT COUNT(*) FROM (SELECT loan_id FROM forbearance_measures GROUP BY loan_id HAVING COUNT(*) > 2)
+
+- id: q17
+  category: forbearance
+  question: What is the failure (re-default) rate of each forbearance measure type, considering only finished measures?
+  gold_sql: |
+    SELECT measure_type, ROUND(100.0 * SUM(CASE WHEN status = 'Failed' THEN 1 ELSE 0 END) / COUNT(*), 2)
+    FROM forbearance_measures WHERE status IN ('Completed', 'Failed') GROUP BY measure_type
+
+- id: q18
+  category: collateral
+  question: What is the average LTV of active non-performing mortgages?
+  gold_sql: |
+    SELECT ROUND(AVG(ltv_ratio), 4) FROM v_loan_overview
+    WHERE loan_status = 'Active' AND is_npe = 1 AND product_type = 'Mortgage' AND ltv_ratio IS NOT NULL
+
+- id: q19
+  category: collateral
+  question: How many collaterals have a valuation older than 3 years, by collateral type?
+  gold_sql: |
+    SELECT collateral_type, COUNT(*) FROM collaterals
+    WHERE valuation_date < date('2026-09-30', '-3 years') GROUP BY collateral_type
+
+- id: q20
+  category: collateral
+  question: How many active loans are under-collateralised (LTV above 100%)?
+  gold_sql: SELECT COUNT(*) FROM v_loan_overview WHERE loan_status = 'Active' AND ltv_ratio > 1
+
+- id: q21
+  category: legal
+  question: What is the total amount recovered from completed auctions?
+  gold_sql: SELECT ROUND(SUM(recovered_amount_eur), 2) FROM legal_actions WHERE action_type = 'Auction Completed'
+
+- id: q22
+  category: legal
+  question: How many legal actions of each type are currently pending or in progress?
+  gold_sql: |
+    SELECT action_type, COUNT(*) FROM legal_actions
+    WHERE status IN ('Pending', 'In Progress') GROUP BY action_type
+
+- id: q23
+  category: trend
+  question: How many loans became non-performing in each quarter of 2025?
+  gold_sql: |
+    SELECT strftime('%Y', default_date) || '-Q' || ((CAST(strftime('%m', default_date) AS INTEGER) + 2) / 3), COUNT(*)
+    FROM loans WHERE default_date >= '2025-01-01' AND default_date < '2026-01-01' GROUP BY 1
+
+- id: q24
+  category: trend
+  question: What is the NPE ratio by origination vintage year for mortgages?
+  gold_sql: |
+    SELECT strftime('%Y', origination_date),
+           ROUND(100.0 * SUM(CASE WHEN is_npe = 1 THEN outstanding_principal_eur + accrued_interest_eur ELSE 0 END)
+           / SUM(outstanding_principal_eur + accrued_interest_eur), 2)
+    FROM loans WHERE loan_status = 'Active' AND product_type = 'Mortgage' GROUP BY 1
+
+- id: q25
+  category: borrower
+  question: Which 5 borrowers have the highest total GBV across their active loans?
+  gold_sql: |
+    SELECT borrower_id, ROUND(SUM(outstanding_principal_eur + accrued_interest_eur), 2) AS gbv
+    FROM loans WHERE loan_status = 'Active' GROUP BY borrower_id ORDER BY gbv DESC LIMIT 5
+
+- id: q26
+  category: borrower
+  question: What share of unemployed borrowers' active loans are non-performing, by number of loans?
+  gold_sql: |
+    SELECT ROUND(100.0 * SUM(l.is_npe) / COUNT(*), 2)
+    FROM loans l JOIN borrowers b ON b.borrower_id = l.borrower_id
+    WHERE l.loan_status = 'Active' AND b.employment_status = 'Unemployed'
+
+- id: q27
+  category: writeoff
+  question: What was the total amount written off per year since 2020?
+  gold_sql: |
+    SELECT strftime('%Y', write_off_date), ROUND(SUM(write_off_amount_eur), 2)
+    FROM loans WHERE loan_status = 'Written-off' AND write_off_date >= '2020-01-01' GROUP BY 1
+
+- id: q28
+  category: strategy
+  question: Show the GBV of non-performing loans by servicing strategy.
+  gold_sql: |
+    SELECT servicing_strategy, ROUND(SUM(outstanding_principal_eur + accrued_interest_eur), 2)
+    FROM loans WHERE loan_status = 'Active' AND is_npe = 1 GROUP BY servicing_strategy
