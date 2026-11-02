@@ -1,0 +1,10 @@
+flowchart LR
+    U([Analyst question]) --> E[TextToSQL engine]
+    S[(Semantic layer<br/>glossary · rules · examples)] --> E
+    E <-->|prompt / JSON| L[OpenAI LLM]
+    E -->|SQL| X[Safe executor<br/>read-only sandbox]
+    X -.->|error: self-correct| E
+    X <--> D[(SQLite<br/>NPL portfolio)]
+    G[Data generator<br/>+ quality checks] --> D
+    X -->|rows| A[Answer<br/>summary · chart · table]
+    A --> UI([Streamlit UI / CLI])

@@ -43,78 +43,13 @@ Most text-to-SQL demos stop at "LLM writes a query". Production teams in regulat
 
 ## Architecture
 
-```mermaid
-flowchart LR
-    U[Analyst question] --> E[TextToSQL engine]
-    S[(Semantic layer<br/>schema · glossary · rules · examples)] --> E
-    H[Conversation history] --> E
-    E -->|prompt| L[OpenAI LLM]
-    L -->|JSON: sql, explanation, chart| E
-    E --> X[Safe executor<br/>read-only · authorizer · timeout · row cap]
-    X -->|error| E
-    X -->|rows| C[Chart selector]
-    X -->|rows| M[LLM summary<br/>grounded on result]
-    C --> UI[Streamlit UI / CLI]
-    M --> UI
-    D[(SQLite portfolio<br/>synthetic NPL book)] --- X
-    G[Synthetic data generator] --> D
-    Q[Data-quality checks] --> D
-```
+<p align="center"><img src="docs/architecture.png" alt="Architecture: question, semantic layer, LLM, safe executor, answer" width="100%"></p>
 
 ## Data model
 
 A synthetic book of **20,000 loans / 16,000 borrowers** (as of 30 Sep 2026), loosely modelled on the public EBA NPL data templates. About half the active GBV is non-performing, which is typical of a servicer's portfolio.
 
-```mermaid
-erDiagram
-    BORROWERS ||--o{ LOANS : has
-    LOANS ||--o{ COLLATERALS : "secured by"
-    LOANS ||--o{ PAYMENTS : "instalments (24m)"
-    LOANS ||--o{ FORBEARANCE_MEASURES : "restructured by"
-    LOANS ||--o{ LEGAL_ACTIONS : "enforced by"
-    BORROWERS {
-        text borrower_id PK
-        text borrower_type
-        text region
-        text industry_sector
-        text employment_status
-    }
-    LOANS {
-        text loan_id PK
-        text product_type
-        real outstanding_principal_eur
-        int days_past_due
-        int ifrs9_stage
-        int is_npe
-        int is_forborne
-        real provision_eur
-        text servicing_strategy
-    }
-    COLLATERALS {
-        text collateral_id PK
-        text collateral_type
-        real valuation_eur
-        text valuation_date
-        int lien_rank
-    }
-    PAYMENTS {
-        int payment_id PK
-        text due_date
-        real amount_due_eur
-        real amount_paid_eur
-    }
-    FORBEARANCE_MEASURES {
-        text measure_id PK
-        text measure_type
-        text status
-    }
-    LEGAL_ACTIONS {
-        text action_id PK
-        text action_type
-        text status
-        real recovered_amount_eur
-    }
-```
+<p align="center"><img src="docs/data-model.png" alt="Entity-relationship diagram of the loan portfolio" width="85%"></p>
 
 The generator enforces the rules a real risk-data team would test for:
 

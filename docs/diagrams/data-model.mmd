@@ -1,0 +1,48 @@
+erDiagram
+    BORROWERS ||--o{ LOANS : has
+    LOANS ||--o{ COLLATERALS : "secured by"
+    LOANS ||--o{ PAYMENTS : "instalments (24m)"
+    LOANS ||--o{ FORBEARANCE_MEASURES : "restructured by"
+    LOANS ||--o{ LEGAL_ACTIONS : "enforced by"
+    BORROWERS {
+        text borrower_id PK
+        text borrower_type
+        text region
+        text industry_sector
+        text employment_status
+    }
+    LOANS {
+        text loan_id PK
+        text product_type
+        real outstanding_principal_eur
+        int days_past_due
+        int ifrs9_stage
+        int is_npe
+        int is_forborne
+        real provision_eur
+        text servicing_strategy
+    }
+    COLLATERALS {
+        text collateral_id PK
+        text collateral_type
+        real valuation_eur
+        text valuation_date
+        int lien_rank
+    }
+    PAYMENTS {
+        int payment_id PK
+        text due_date
+        real amount_due_eur
+        real amount_paid_eur
+    }
+    FORBEARANCE_MEASURES {
+        text measure_id PK
+        text measure_type
+        text status
+    }
+    LEGAL_ACTIONS {
+        text action_id PK
+        text action_type
+        text status
+        real recovered_amount_eur
+    }
