@@ -49,6 +49,8 @@ class Settings:
     max_rows: int
     query_timeout_s: float
     max_retries: int
+    embedding_model: str
+    docs_db_path: Path
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -58,4 +60,6 @@ class Settings:
             max_rows=int(os.getenv("COPILOT_MAX_ROWS", "1000")),
             query_timeout_s=float(os.getenv("COPILOT_QUERY_TIMEOUT_S", "15")),
             max_retries=int(os.getenv("COPILOT_MAX_RETRIES", "2")),
+            embedding_model=os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"),
+            docs_db_path=Path(os.getenv("COPILOT_DOCS_DB_PATH", str(DATA_DIR / "docs.db"))),
         )

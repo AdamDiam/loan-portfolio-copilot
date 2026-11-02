@@ -1,10 +1,12 @@
 flowchart LR
-    U([Analyst question]) --> E[TextToSQL engine]
-    S[(Semantic layer<br/>glossary · rules · examples)] --> E
-    E <-->|prompt / JSON| L[OpenAI LLM]
+    U([Question]) --> R{Router}
+    R -->|data · both| E[Text-to-SQL engine<br/>+ semantic layer]
+    R -->|docs · both| Q[Regulatory Q&A<br/>cited answers]
     E -->|SQL| X[Safe executor<br/>read-only sandbox]
     X -.->|error: self-correct| E
     X <--> D[(SQLite<br/>NPL portfolio)]
-    G[Data generator<br/>+ quality checks] --> D
-    X -->|rows| A[Answer<br/>summary · chart · table]
+    Q <-->|hybrid search| I[(Regulation index<br/>embeddings + FTS5)]
+    P[EBA / ECB PDFs] -->|chunk · embed| I
+    X -->|rows| A[Answer<br/>numbers · chart · citations]
+    Q -->|passages + pages| A
     A --> UI([Streamlit UI / CLI])

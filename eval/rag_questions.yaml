@@ -1,0 +1,108 @@
+# Evaluation set for routing and regulatory question answering.
+#
+# route:     expected router decision (data | docs | both)
+# expected:  where the answer lives (doc_id + 1-based PDF pages), or a list of such
+#            places; retrieval is a hit if any retrieved chunk is on one of them (+/- 1 page)
+# keywords:  the answer must contain at least one of these (case-insensitive)
+# answerable: false for questions the documents cannot answer (must refuse)
+
+- id: r01
+  route: docs
+  question: Which credit institutions must set up a dedicated NPE strategy under the EBA guidelines?
+  expected: {doc_id: EBA/GL/2018/06, pages: [4, 7, 14, 15]}
+  keywords: ["5%", "5 %", "five per"]
+
+- id: r02
+  route: docs
+  question: How long is the probation period before a performing forborne exposure can stop being classified as forborne?
+  expected: {doc_id: ECB NPL Guidance, pages: [57, 59, 60, 63]}
+  keywords: ["two years", "2 years", "two-year", "2-year"]
+
+- id: r03
+  route: docs
+  question: When can a defaulted exposure return to non-defaulted status?
+  expected: {doc_id: EBA/GL/2016/07, pages: [18, 19]}
+  keywords: ["3 months", "three months"]
+
+- id: r04
+  route: docs
+  question: What is the minimum period before an exposure under distressed restructuring can be reclassified as non-defaulted?
+  expected: {doc_id: EBA/GL/2016/07, pages: [19, 20]}
+  keywords: ["1 year", "one year", "12 months"]
+
+- id: r05
+  route: docs
+  question: What is a distressed restructuring according to the definition of default guidelines?
+  expected: {doc_id: EBA/GL/2016/07, pages: [13, 14]}
+  keywords: ["concession", "diminished financial obligation", "1%"]
+
+- id: r06
+  route: docs
+  question: Which indications of unlikeliness to pay can be based on external information?
+  expected: {doc_id: EBA/GL/2016/07, pages: [15, 16]}
+  keywords: ["credit regist", "delays", "external"]
+
+- id: r07
+  route: docs
+  question: How often should the collateral of non-performing exposures be revalued?
+  expected: {doc_id: EBA/GL/2018/06, pages: [51, 52, 53]}
+  keywords: ["annual", "once a year", "every year"]
+
+- id: r08
+  route: docs
+  question: Can indexed valuations be used instead of individual valuations for NPL collateral?
+  expected: {doc_id: ECB NPL Guidance, pages: [88, 89, 90]}
+  keywords: ["300,000", "300 000", "300000"]
+
+- id: r09
+  route: docs
+  question: What is the maximum time horizon for short-term forbearance measures?
+  expected: {doc_id: EBA/GL/2018/06, pages: [38, 39]}
+  keywords: ["two years", "2 years"]
+
+- id: r10
+  route: docs
+  question: What are the two criteria that make an exposure non-performing?
+  expected:
+    - {doc_id: ECB NPL Guidance, pages: [50, 100]}
+    - {doc_id: EBA/GL/2018/06, pages: [43]}
+    - {doc_id: EBA/GL/2016/07, pages: [7, 8]}
+  keywords: ["90 days"]
+
+- id: r11
+  route: docs
+  question: What signs indicate that a borrower is in financial difficulty when a loan is modified?
+  expected: {doc_id: EBA/GL/2018/06, pages: [44]}
+  keywords: ["30 days", "probability of default"]
+
+- id: r12
+  route: docs
+  question: Which groups of exposures deserve particular attention when deciding on NPE write-offs?
+  expected: {doc_id: EBA/GL/2018/06, pages: [48, 49]}
+  keywords: ["prolonged arrears", "arrears"]
+
+- id: r13
+  route: docs
+  question: What is the current ECB deposit facility rate?
+  answerable: false
+
+# ---- routing-only checks (questions that must go to the database or to both) ----
+- id: r14
+  route: data
+  question: How many active loans are currently forborne?
+
+- id: r15
+  route: data
+  question: What is our NPE ratio by product type?
+
+- id: r16
+  route: both
+  question: How many of our active loans are forborne, and how long must the probation period last according to the guidelines?
+
+- id: r17
+  route: both
+  question: What is our NPE ratio, and what do the EBA guidelines require from banks above the NPE strategy threshold?
+
+- id: r18
+  route: both
+  question: How many of our collaterals have valuations older than one year, and how often do the guidelines require NPE collateral to be revalued?

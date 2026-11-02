@@ -78,3 +78,28 @@ class OpenAIClient:
             prompt_tokens=getattr(usage, "prompt_tokens", 0) or 0,
             completion_tokens=getattr(usage, "completion_tokens", 0) or 0,
         )
+
+
+class Embedder(Protocol):
+    model: str
+
+    def embed(self, texts: list[str]) -> list[list[float]]: ...
+
+
+class OpenAIEmbedder:
+    """OpenAI embeddings, batched."""
+
+    def __init__(self, model: str = "text-embedding-3-small", api_key: str | None = None, batch_size: int = 96) -> None:
+        from openai import OpenAI
+
+        self.model = model
+        self.batch_size = batch_size
+        self._client = OpenAI(api_key=api_key, timeout=120.0)
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        out: list[list[float]] = []
+        for i in range(0, len(texts), self.batch_size):
+            batch = [t.replace("\n", " ")[:8000] for t in texts[i : i + self.batch_size]]
+            resp = self._client.embeddings.create(model=self.model, input=batch)
+            out.extend(d.embedding for d in sorted(resp.data, key=lambda d: d.index))
+        return out

@@ -14,9 +14,12 @@ import pandas as pd  # noqa: E402
 import plotly.express as px  # noqa: E402
 import streamlit as st  # noqa: E402
 
+from copilot.assistant import Copilot, Turn  # noqa: E402
 from copilot.charts import ChartSpec  # noqa: E402
 from copilot.config import SNAPSHOT_DATE, Settings  # noqa: E402
-from copilot.llm import OpenAIClient  # noqa: E402
+from copilot.llm import OpenAIClient, OpenAIEmbedder  # noqa: E402
+from copilot.rag.answerer import DocAnswer, DocQA  # noqa: E402
+from copilot.rag.retriever import HybridRetriever  # noqa: E402
 from copilot.sql.engine import Answer, TextToSQL  # noqa: E402
 from copilot.sql.safe_executor import SafeExecutor  # noqa: E402
 
@@ -45,7 +48,19 @@ EXAMPLES: dict[str, list[str]] = {
         "What is the average LTV of non-performing mortgages by region?",
         "How much have we recovered from completed auctions per year?",
     ],
+    "📚 Regulation (EBA / ECB)": [
+        "When does a forborne exposure stop being classified as forborne?",
+        "When can a defaulted exposure return to non-defaulted status?",
+        "How often should collateral of non-performing exposures be revalued?",
+    ],
+    "📊+📚 Data + regulation": [
+        "How many of our active loans are forborne, and how long must the probation period last according to the guidelines?",
+        "What is our NPE ratio, and what do the EBA guidelines require from banks above the NPE strategy threshold?",
+        "How many NPE collaterals have valuations older than one year, and what do the guidelines say about revaluation frequency?",
+    ],
 }
+
+ROUTE_LABELS = {"data": "📊 Portfolio data", "docs": "📚 Regulation", "both": "📊+📚 Data + regulation"}
 
 KPI_SQL = """
 SELECT
@@ -70,8 +85,21 @@ def get_executor(db_path: str) -> SafeExecutor:
 
 
 @st.cache_resource
-def get_engine(model: str, db_path: str, max_retries: int) -> TextToSQL:
-    return TextToSQL(OpenAIClient(model), get_executor(db_path), max_retries=max_retries)
+def get_retriever(docs_db: str, embedding_model: str) -> HybridRetriever | None:
+    if not Path(docs_db).exists():
+        return None
+    return HybridRetriever(Path(docs_db), OpenAIEmbedder(embedding_model))
+
+
+@st.cache_resource
+def get_copilot(model: str, db_path: str, max_retries: int, docs_db: str, embedding_model: str) -> Copilot:
+    llm = OpenAIClient(model)
+    retriever = get_retriever(docs_db, embedding_model)
+    return Copilot(
+        llm,
+        TextToSQL(llm, get_executor(db_path), max_retries=max_retries),
+        DocQA(llm, retriever) if retriever else None,
+    )
 
 
 @st.cache_data
@@ -102,7 +130,7 @@ def render_chart(spec: ChartSpec, df: pd.DataFrame) -> None:
     st.plotly_chart(fig)
 
 
-def render_answer(ans: Answer, key: str, show_follow_ups: bool) -> None:
+def render_data(ans: Answer, key: str, show_follow_ups: bool) -> None:
     if ans.error:
         st.error(ans.error)
     elif not ans.answerable:
@@ -145,6 +173,41 @@ def render_answer(ans: Answer, key: str, show_follow_ups: bool) -> None:
             col.button(q, key=f"fu_{key}_{i}", on_click=ask_later, args=(q,))
 
 
+def render_docs(ans: DocAnswer) -> None:
+    if ans.error:
+        st.error(ans.error)
+        return
+    if not ans.answerable:
+        st.info(ans.answer_text or "The indexed regulation does not cover this question.")
+    else:
+        st.markdown(ans.answer_text)
+    if ans.citations:
+        with st.expander(f"Sources ({len(ans.citations)})", expanded=False):
+            for c in ans.citations:
+                section = f" · {c.section}" if c.section else ""
+                st.markdown(f"**[{c.number}] {c.doc_id}, page {c.page}**{section}  \n*{c.title}*")
+                st.caption(c.snippet + ("…" if len(c.snippet) >= 400 else ""))
+    st.caption(f"{ans.latency_ms / 1000:.1f}s · {ans.usage.total_tokens:,} tokens · {len(ans.retrieved)} passages retrieved")
+
+
+def render_turn(turn: Turn, key: str, show_follow_ups: bool) -> None:
+    st.caption(f"Answered from: **{ROUTE_LABELS.get(turn.route, turn.route)}**")
+    if turn.route == "both":
+        if turn.synthesis:
+            st.markdown(turn.synthesis)
+            st.divider()
+        if turn.data is not None:
+            st.markdown("##### 📊 Portfolio data")
+            render_data(turn.data, key, show_follow_ups=False)
+        if turn.docs is not None:
+            st.markdown("##### 📚 What the regulation says")
+            render_docs(turn.docs)
+    elif turn.docs is not None:
+        render_docs(turn.docs)
+    elif turn.data is not None:
+        render_data(turn.data, key, show_follow_ups=show_follow_ups)
+
+
 # --------------------------------------------------------------------------
 # page
 # --------------------------------------------------------------------------
@@ -156,8 +219,8 @@ def main() -> None:
     with st.sidebar:
         st.markdown("## 🏦 Loan Portfolio AI Copilot")
         st.caption(
-            "Ask questions about an NPL loan portfolio in plain English. The copilot writes SQL, "
-            "runs it in a read-only sandbox, and explains the result."
+            "Ask about an NPL loan portfolio, or about the EBA / ECB rules that govern it, in plain English. "
+            "Data questions become read-only SQL; regulatory questions are answered from the official texts, with page citations."
         )
         summarize = st.toggle("Plain-English summary", value=True, help="Second LLM call that explains the result.")
         if st.button("🗑️ Clear conversation"):
@@ -170,6 +233,11 @@ def main() -> None:
                 for i, q in enumerate(questions):
                     st.button(q, key=f"ex_{group}_{i}", on_click=ask_later, args=(q,))
         st.divider()
+        retriever = get_retriever(str(settings.docs_db_path), settings.embedding_model) if os.getenv("OPENAI_API_KEY") else None
+        if retriever:
+            st.caption(f"📚 Regulation index: {len(retriever.documents)} documents · {retriever.n_chunks:,} passages")
+        else:
+            st.caption("📚 Regulation index not built: run `python scripts/download_docs.py` then `python -m copilot.rag.ingest`.")
         st.caption(f"Model: `{settings.openai_model}` · Data: synthetic, as of {SNAPSHOT_DATE:%d %b %Y}")
 
     st.title("Loan Portfolio AI Copilot")
@@ -192,26 +260,28 @@ def main() -> None:
         st.warning("Set `OPENAI_API_KEY` in a `.env` file in the project folder (see `.env.example`) and restart.")
         st.stop()
 
-    engine = get_engine(settings.openai_model, db, settings.max_retries)
-    history: list[Answer] = st.session_state.history
+    copilot = get_copilot(
+        settings.openai_model, db, settings.max_retries, str(settings.docs_db_path), settings.embedding_model
+    )
+    history: list[Turn] = st.session_state.history
 
-    typed = st.chat_input("Ask about the portfolio, e.g. “What is the NPE ratio by product?”")
+    typed = st.chat_input("Ask about the portfolio or the regulation, e.g. “When does a forborne exposure exit probation?”")
     question = typed or st.session_state.pop("pending", None)
 
     for i, past in enumerate(history):
         with st.chat_message("user"):
             st.markdown(past.question)
         with st.chat_message("assistant"):
-            render_answer(past, key=str(i), show_follow_ups=not question and i == len(history) - 1)
+            render_turn(past, key=str(i), show_follow_ups=not question and i == len(history) - 1)
 
     if question:
         with st.chat_message("user"):
             st.markdown(question)
         with st.chat_message("assistant"):
-            with st.spinner("Thinking, writing SQL and running it…"):
-                ans = engine.ask(question, history=history, summarize=summarize)
-            history.append(ans)
-            render_answer(ans, key=str(len(history) - 1), show_follow_ups=True)
+            with st.spinner("Thinking: choosing the source, querying the data and/or reading the regulation…"):
+                turn = copilot.ask(question, history=history, summarize=summarize)
+            history.append(turn)
+            render_turn(turn, key=str(len(history) - 1), show_follow_ups=True)
 
 
 main()
